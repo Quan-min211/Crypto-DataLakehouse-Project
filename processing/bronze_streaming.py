@@ -1,0 +1,178 @@
+"""
+bronze_streaming.py
+===================
+Phase 3 — Kafka → Bronze Delta Lake (Structured Streaming)
+
+Architecture:
+  SOURCE     : Kafka topic `crypto_trades_raw` (JSON)
+  SINK       : Delta Lake s3a://bronze/crypto_trades/
+  MODE       : Append (streaming, raw/immutable)
+  TRIGGER    : ProcessingTime("30 seconds") — micro-batch every 30s
+  PARTITIONS : (processing_date, s) — date-first prevents small files
+  CHECKPOINT : s3a://checkpoints/kafka_to_bronze/
+
+Design decisions:
+  - NO deduplication at Bronze. Bronze is raw truth. Any dedup logic here
+    risks permanent data loss if the logic is wrong. Silver owns cleansing.
+  - NO withWatermark+dropDuplicates in streaming. Without a watermark,
+    Spark holds ALL historical state in memory → OOM on long runs.
+  - Partition by (processing_date, s): date-first partitioning creates
+    daily directory boundaries per symbol, preventing millions of tiny
+    files from accumulating in a single symbol partition over months.
+
+Run locally:
+  python processing/bronze_streaming.py
+"""
+
+import logging
+import os
+import sys
+# Add processing dir to path so gcs_auth is importable when spark-submit is used
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gcs_auth import apply_gcs_auth
+
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    StructType, StructField, StringType,
+    LongType, BooleanType
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+)
+log = logging.getLogger("kafka_to_bronze")
+
+# ── Config ────────────────────────────────────────────────────────────────────
+# NOTE: Default to Docker-internal address (kafka:29092) because this script
+# runs inside the Docker lakehouse-net via the Spark cluster.
+# If running directly on host (dev/debug), override with:
+#   export KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+
+KAFKA_BOOTSTRAP  = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
+KAFKA_TOPIC      = os.getenv("KAFKA_TOPIC_RAW",          "crypto_trades_raw")
+# DEFAULT to cluster URL — scripts must run distributed, not local
+SPARK_MASTER     = os.getenv("SPARK_MASTER_URL",          "spark://spark-master:7077")
+# Use 'latest' to avoid reading full backlog on startup;
+# set to 'earliest' explicitly only for historical backfill runs.
+KAFKA_OFFSETS    = os.getenv("KAFKA_STARTING_OFFSETS",    "latest")
+# Trigger interval: 60s gives micro-batches enough time on limited resources.
+TRIGGER_INTERVAL = os.getenv("SPARK_TRIGGER_INTERVAL",    "60 seconds")
+
+BRONZE_PATH      = "gs://crypto-lakehouse-group8/bronze"
+CHECKPOINT_PATH  = "gs://crypto-lakehouse-group8/checkpoints/kafka_to_bronze"
+
+# ── Known schema for Binance trade tick ──────────────────────────────────────
+# NOTE: Spark 4.x is case-insensitive. Fields "e" and "E" in the same struct
+# are treated as duplicates. We rename them here at parse time.
+TRADE_SCHEMA = StructType([
+    StructField("event_type",  StringType(),  True),   # was "e"
+    StructField("event_time_ms", LongType(),  True),   # was "E"
+    StructField("s",           StringType(),  True),
+    StructField("trade_id",    LongType(),    True),   # was "t"
+    StructField("p",           StringType(),  True),
+    StructField("q",           StringType(),  True),
+    StructField("trade_time",  LongType(),    True),   # was "T"
+    StructField("buyer_maker", BooleanType(), True),   # was "m"
+    StructField("ignore_m",    BooleanType(), True),   # was "M"
+    StructField("ingested_at", StringType(),  True),
+])
+
+
+def create_spark() -> SparkSession:
+    log.info("Connecting to Spark Master: %s", SPARK_MASTER)
+    builder = (
+        SparkSession.builder
+        .appName("KafkaToBronze")
+        .master(SPARK_MASTER)
+        .config("spark.sql.extensions",
+                "io.delta.sql.DeltaSparkSessionExtension")
+        .config("spark.sql.catalog.spark_catalog",
+                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+        # Delta atomicity on GCS
+        .config("spark.delta.logStore.gs.impl", "io.delta.storage.GCSLogStore")
+        .config("spark.databricks.delta.retentionDurationCheck.enabled", "false")
+        .config("spark.driver.memory",   "512m")
+        .config("spark.sql.shuffle.partitions", "4")
+    )
+    # apply_gcs_auth auto-detects SA key or ADC and injects the right configs
+    builder = apply_gcs_auth(builder)
+    spark = builder.getOrCreate()
+    spark.sparkContext.setLogLevel("WARN")
+    return spark
+
+
+
+def main():
+    log.info("=== Kafka → Bronze Streaming job starting ===")
+    spark = create_spark()
+
+    # ── Read from Kafka ───────────────────────────────────────────────────
+    raw_stream = (
+        spark.readStream
+        .format("kafka")
+        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
+        .option("subscribe",               KAFKA_TOPIC)
+        .option("startingOffsets",         KAFKA_OFFSETS)
+        .option("failOnDataLoss",          "false")
+        .load()
+    )
+
+    # ── Deserialise JSON payload ──────────────────────────────────────────
+    # FIX: Spark 4.x is case-insensitive. e/E, t/T, m/M are duplicate columns.
+    # We rename the keys directly in the JSON string before parsing.
+    parsed = (
+        raw_stream
+        .withColumn("raw", F.col("value").cast("string"))
+        .withColumn("clean_json", F.expr("""
+            replace(replace(replace(replace(replace(replace(
+                raw, 
+            '"e":', '"event_type":'), 
+            '"E":', '"event_time_ms":'), 
+            '"t":', '"trade_id":'), 
+            '"T":', '"trade_time":'), 
+            '"m":', '"buyer_maker":'), 
+            '"M":', '"ignore_m":')
+        """))
+        .select(
+            F.from_json("clean_json", TRADE_SCHEMA).alias("data")
+        )
+        # Schema already has unambiguous names (event_type, event_time_ms)
+        # so .select("data.*") is safe in Spark 4.x
+        .select("data.*")
+        # FIX 1 & 2: No deduplication here. Bronze = raw immutable truth.
+        # FIX 3: Date-first partitioning prevents small files.
+        .withColumn(
+            "processing_date",
+            F.to_date(F.from_unixtime(F.col("event_time_ms") / 1000))
+        )
+    )
+
+    # ── Write to Bronze Delta (Append, raw, no filtering) ────────────────
+    # Why Append?
+    #   - Bronze is raw/immutable history. We never overwrite it.
+    #   - Streaming requires Append or Complete mode.
+    # Why (processing_date, s) partition order?
+    #   - Date-first means each micro-batch only opens ONE directory per day.
+    #   - Symbol-first would open 50 directories per micro-batch, creating
+    #     O(symbols × batches-per-day) = O(50 × 2880) = 144,000 tiny files/day.
+    query = (
+        parsed.writeStream
+        .format("delta")
+        .outputMode("append")
+        .option("checkpointLocation", CHECKPOINT_PATH)
+        .option("mergeSchema", "true")              # handle field additions gracefully
+        .partitionBy("processing_date", "s")        # FIX 3: date-first partition
+        .trigger(processingTime=TRIGGER_INTERVAL)
+        .start(BRONZE_PATH)
+    )
+
+    log.info("Streaming query started. Awaiting termination...")
+    # Bronze chạy 24/7 infinite - Spark tự động quản lý 2 cores này
+    # Silver/Gold sẽ dùng 2 cores khác khi cần
+    query.awaitTermination()  # Chạy mãi (không timeout)
+
+
+if __name__ == "__main__":
+    main()
