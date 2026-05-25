@@ -2,37 +2,259 @@
 
 **A production-grade streaming and batch data engineering platform**
 
-Built on the Medallion Architecture for cryptocurrency market analysis at scale.
+Built on the Medallion Architecture (Bronze → Silver → Gold) for cryptocurrency market analysis at scale.
 
 ---
 
-## Quick Facts
+## Overview
+
+This project implements an enterprise-grade data lakehouse for real-time and historical cryptocurrency market data. It demonstrates best practices in:
+
+- **Real-time streaming** of 50 Binance trading pairs via WebSocket
+- **Batch ingestion** of 1000 historical candles per pair via REST API
+- **Medallion architecture** with three-layer data transformation
+- **Automated orchestration** via Apache Airflow
+- **SQL analytics** through Trino on Delta Lake
+- **Cloud-native deployment** on Google Cloud Storage
+
+---
+
+## Quick Start
+
+Get the platform running in 4 phases:
+
+**Phase 1: Infrastructure**
+```bash
+git clone https://github.com/Quan-min211/Crypto-DataLakehouse-Project.git
+cd Crypto-DataLakehouse-Project
+cp .env.example .env
+docker-compose up -d --build
+```
+
+**Phase 2: Data Ingestion**
+```bash
+cd ingestion && python producer_batch.py  # Historical data
+python producer_stream.py                 # Real-time stream
+```
+
+**Phase 3: Spark Processing**
+```bash
+# Bronze → Silver → Gold transformations (runs via Airflow)
+```
+
+**Phase 4: Analytics**
+```
+Visit http://localhost:8080 (Trino UI) and query Gold layer
+```
+
+For detailed instructions, see [QUICK_START.md](QUICK_START.md)
+
+---
+
+## Documentation Structure
+
+| Document | Content |
+|----------|---------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System design, medallion layers, technology stack, ingestion paths |
+| [QUICK_START.md](QUICK_START.md) | 4-phase setup guide with verification steps |
+| [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) | Directory breakdown, file purposes, development workflow |
+| [DATA_FLOW.md](DATA_FLOW.md) | Streaming & batch pipelines, transformations, monitoring |
+| [INFRASTRUCTURE.md](INFRASTRUCTURE.md) | Services, deployment options, scaling, backup & recovery |
+| [CONFIGURATION.md](CONFIGURATION.md) | Environment variables, tuning, security, troubleshooting |
+
+---
+
+## Key Facts
 
 | Aspect | Details |
 |---|---|
-| **Purpose** | Real-time and historical crypto data pipeline |
 | **Data Source** | Binance (Top 50 USDT pairs) |
-| **Architecture** | Medallion (Bronze → Silver → Gold) |
+| **Ingestion** | Real-time WebSocket + Batch REST API |
 | **Storage** | Google Cloud Storage (Delta Lake format) |
-| **Scale** | 50 trading pairs, tick-level granularity |
-| **Repository** | https://github.com/Quan-min211/Crypto-DataLakehouse-Project |
+| **Query Engine** | Trino (Federated SQL) |
+| **Orchestration** | Apache Airflow DAGs |
+| **Scale** | 50 pairs, tick-level granularity, 10-45 MB/day |
+| **Architecture** | Medallion (3 transformation layers) |
 | **License** | MIT |
 
 ---
 
-## Table of Contents
+## Technology Stack
 
-1. [Overview](#overview)
-2. [Core Concepts](#core-concepts)
-3. [Technology Stack](#technology-stack)
-4. [Architecture](#architecture)
-5. [Project Structure](#project-structure)
-6. [Data Flow](#data-flow)
-7. [Infrastructure Services](#infrastructure-services)
-8. [Quick Start](#quick-start)
-9. [Configuration](#configuration)
-10. [Roadmap](#roadmap)
-11. [Author](#author)
+### Core Components
+
+**Ingestion:** Apache Kafka 7.5.0 (message broker)
+
+**Processing:** Apache Spark 3.5.8 + Delta Lake 3.x (ACID storage)
+
+**Storage:** Google Cloud Storage (cloud-native)
+
+**Query:** Trino 432 (SQL federation)
+
+**Metadata:** Hive Metastore 3.1.2-e.18 + PostgreSQL 15
+
+**Orchestration:** Apache Airflow 2.8+ (DAG scheduling)
+
+**Deployment:** Docker Compose v3.8
+
+See [ARCHITECTURE.md](ARCHITECTURE.md#technology-stack) for complete tech stack breakdown.
+
+---
+
+## Project Structure
+
+```
+Crypto-DataLakehouse-Project/
+├── ingestion/              Data producers (WebSocket, REST API)
+├── processing/             Spark ETL jobs (bronze_streaming, silver, gold)
+├── dags/                   Apache Airflow DAGs (orchestration)
+├── dbt/                    Data transformations & tests
+├── spark/                  Custom Spark Docker image
+├── ML/                     Machine learning module (Flask app)
+├── docker-compose.yml      Multi-service orchestration
+├── docs/                   Technical documentation
+└── README.md              This file
+```
+
+See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for detailed breakdown.
+
+---
+
+## Architecture at a Glance
+
+```
+Binance Data
+  ├─ WebSocket (real-time) → Kafka → Spark Streaming → Bronze (GCS)
+  └─ REST API (historical) → Staging → Spark Batch → Bronze (GCS)
+                                                          ↓
+                                     [SILVER: Dedup + Validate]
+                                                          ↓
+                                    [GOLD: Aggregate OHLCV]
+                                                          ↓
+                                    Trino Query Engine + BI
+```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for full system diagrams.
+
+---
+
+## Data Flow
+
+### Streaming Path
+Real-time tick data → Kafka → 30-second micro-batches → Bronze (append-only)
+
+### Batch Path  
+REST API candles → GCS staging → Spark job → Bronze → Silver → Gold
+
+**Latency:** ~30-60 seconds (streaming), Hours (batch)
+
+See [DATA_FLOW.md](DATA_FLOW.md) for detailed pipeline breakdown.
+
+---
+
+## Infrastructure
+
+### Services
+
+| Service | Purpose | Port |
+|---------|---------|------|
+| Kafka | Message broker | 9092 |
+| Spark Master | Distributed computing | 8082 |
+| Trino | SQL queries | 8080 |
+| Airflow | Task orchestration | 8081 |
+| Hive Metastore | Schema catalog | 9083 |
+| PostgreSQL | Metadata store | 5432 |
+
+**Resource Requirements:** 10 GB RAM, 12 CPU cores, 20 GB disk
+
+See [INFRASTRUCTURE.md](INFRASTRUCTURE.md) for complete service details and deployment options.
+
+---
+
+## Configuration
+
+All settings via `.env` file (copy from `.env.example`):
+
+```bash
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+GCS_PROJECT_ID=your-project
+GCS_BUCKET_NAME=crypto-lakehouse-group8
+BINANCE_REST_URL=https://api.binance.com
+TOP_N_COINS=50
+```
+
+See [CONFIGURATION.md](CONFIGURATION.md) for all configurable options.
+
+---
+
+## Roadmap
+
+### Completed
+- [x] Dockerized infrastructure (Kafka, Spark, Trino, HMS, PostgreSQL)
+- [x] Real-time WebSocket ingestion
+- [x] Batch REST API ingestion
+- [x] Spark streaming to Bronze
+- [x] Silver layer transformations
+- [x] Gold layer OHLCV aggregation
+- [x] Apache Airflow orchestration
+
+### In Progress
+- [ ] Power BI dashboards
+- [ ] Advanced monitoring (Prometheus + Grafana)
+- [ ] ML feature engineering
+
+### Planned
+- [ ] Kubernetes deployment
+- [ ] Multi-region setup
+- [ ] Cost optimization
+
+---
+
+## Quick Access
+
+**Getting Started**
+- [Quick Start Guide](QUICK_START.md) - 4-phase setup
+- [Architecture Overview](ARCHITECTURE.md) - System design
+
+**Detailed Information**
+- [Project Structure](PROJECT_STRUCTURE.md) - Directory reference
+- [Data Flow](DATA_FLOW.md) - Pipeline details
+- [Infrastructure](INFRASTRUCTURE.md) - Deployment & scaling
+- [Configuration](CONFIGURATION.md) - Environment & tuning
+
+**Support**
+- Spark Master UI: http://localhost:8082
+- Trino Query UI: http://localhost:8080
+- Airflow WebUI: http://localhost:8081
+
+---
+
+## Contributing
+
+Contributions welcome! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
+
+---
+
+## Author
+
+**Minh Quan (Quan-min211)**
+- GitHub: https://github.com/Quan-min211
+- Email: minhquan021105@gmail.com
+
+**Project Repository:** https://github.com/Quan-min211/Crypto-DataLakehouse-Project
+
+---
+
+## Built With
+
+Apache Kafka | Apache Spark | Delta Lake | Trino | Google Cloud Storage | Apache Airflow | Docker | Python
+
+## License
+
+MIT License - see LICENSE file for details
 
 ---
 
