@@ -1,142 +1,94 @@
-# Byte-compiled / optimized / DLL files
+# ===========================
+# Python
+# ===========================
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Environments
+# Virtual Environments
 .env
-.venv
-env/
+.venv*/
 venv/
+env/
 ENV/
 env.bak/
 venv.bak/
 
-# Project configuration
+# ===========================
+# IDE / Editor
+# ===========================
 .vscode/
 .idea/
-
-# Data and logs
-*.csv
-*.json
-*.parquet
-*.log
-
-# Docker relative storage
-minio_data/
-postgres_data/
-
-# Spark / Big Data
-_delta_log/
-/checkpoints/
-spark-warehouse/
-target/
-*.jar
-
-# OS generated files
-.DS_Store
-Thumbs.db
-# Ignore Big Data & Zip files
-*.zip
-*.tar.gz
-*.jar
-
-# Ignore Lakehouse Data & Checkpoints
-spark/
-.agent/
-checkpoints/
-bronze/
-silver/
-gold/
-raw_batch/
-*.csv
-*.json
-*.parquet
-*.tgz
-*.zip
-spark/spark-3.5.8-bin-hadoop3.tgz
-
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Project configuration
-.vscode/
-.idea/
-
-# Data and logs
-*.csv
-*.json
-*.parquet
-*.log
-
-# Docker relative storage
-minio_data/
-postgres_data/
-
-# Spark / Big Data
-_delta_log/
-/checkpoints/
-spark-warehouse/
-target/
-*.jar
-
-# OS generated files
-.DS_Store
-Thumbs.db
-# Ignore Big Data & Zip files
-*.zip
-*.tar.gz
-*.jar
-
-# Ignore Lakehouse Data & Checkpoints
-spark/
-.agent/
-checkpoints/
-bronze/
-silver/
-gold/
-raw_batch/
-*.csv
-*.json
-*.parquet
-*.tgz
-*.zip
-spark/spark-3.5.8-bin-hadoop3.tgz
-
-# Ignore Python Virtual Env
-venv/
-__pycache__/
-
-# Agent
-.claude/*
 .cursor/
+.claude/*
+.agent/
+
+# ===========================
+# Data Files
+# ===========================
+*.csv
+*.json
+*.parquet
+*.log
+
+# ===========================
+# Docker Volumes
+# ===========================
+minio_data/
+postgres_data/
+airflow_logs/
+
+# ===========================
+# Spark / Big Data
+# ===========================
+_delta_log/
+/checkpoints/
+checkpoints/
+spark-warehouse/
+target/
+*.jar
+*.tgz
+spark/spark-3.5.8-bin-hadoop3.tgz
+
+# ===========================
+# Lakehouse Data
+# ===========================
+bronze/
+silver/
+gold/
+raw_batch/
+
+# ===========================
+# Archives / Binaries
+# ===========================
+*.zip
+*.tar.gz
+
+# ===========================
+# OS Generated
+# ===========================
+.DS_Store
+Thumbs.db
+
+# ===========================
+# Node / NPM
+# ===========================
 node_modules/
 
-# GCP Service Account Key — NEVER commit
+# ===========================
+# GCP Secrets — NEVER commit
+# ===========================
 secrets/
 *.json.key
 service-account*.json
-node_modules
-node_modules
-node_modules
-node_modules
-node_modules
-node_modules
 
-# Local virtual environments (all variants)
-.venv*/
-
-# Trained model binaries and ML runtime artifacts
+# ===========================
+# ML Artifacts
+# ===========================
 ML/models/saved/
 ML/data/cached_ohlcv.csv
+
+# ===========================
+# Temp Scripts
+# ===========================
+git_push.bat
